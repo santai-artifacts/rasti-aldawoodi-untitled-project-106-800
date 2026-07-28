@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Space Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #07091a;
+      --surface:    rgba(255,255,255,0.04);
+      --surface-hi: rgba(255,255,255,0.07);
+      --border:     rgba(255,255,255,0.09);
+      --cyan:       #00d4ff;
+      --cyan-dim:   rgba(0,212,255,0.12);
+      --orange:     #ff6b35;
+      --green:      #00e676;
+      --purple:     #a78bfa;
+      --text:       #e2e8f0;
+      --muted:      rgba(226,232,240,0.55);
+      --faint:      rgba(226,232,240,0.25);
+    }
+
+    html, body { height: 100%; }
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    /* nebula glow */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse 900px 700px at 15% 40%,  rgba(0,80,200,0.07)  0%, transparent 70%),
+        radial-gradient(ellipse 700px 600px at 85% 60%,  rgba(100,0,220,0.06) 0%, transparent 70%);
+    }
+
+    canvas#stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+
+    /* ── Header ── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: rgba(7,9,26,0.85); backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand h1 {
+      font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em;
+      background: linear-gradient(120deg, #fff 30%, var(--cyan) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px; border-radius: 20px;
+      background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.3);
+      font-size: 0.62rem; font-weight: 700; letter-spacing: 0.1em; color: var(--green);
+    }
+    .live-pill::before {
+      content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--green);
+      animation: blink 1.2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:0.15 } }
+
+    .clock {
+      font-size: 0.85rem; font-weight: 500; color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .clock em { font-style: normal; color: var(--cyan); font-weight: 600; }
+
+    /* ── Main grid ── */
+    main {
+      position: relative; z-index: 1;
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 18px; padding: 18px;
+      max-width: 1360px; margin: 0 auto;
+    }
+
+    /* ── Panel ── */
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; overflow: hidden; backdrop-filter: blur(6px);
+      transition: border-color 0.25s;
+      animation: fadeUp 0.55s ease-out both;
+    }
+    .panel:hover { border-color: rgba(255,255,255,0.16); }
+
+    @keyframes fadeUp {
+      from { opacity:0; transform:translateY(14px) }
+      to   { opacity:1; transform:translateY(0)    }
+    }
+    .apod-panel  { animation-delay: 0.05s; }
+    .iss-panel   { animation-delay: 0.12s; }
+    .crew-panel  { animation-delay: 0.18s; }
+
+    .panel-head {
+      display: flex; align-items: center; gap: 9px;
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+    }
+    .panel-head h2 {
+      flex: 1; font-size: 0.78rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    }
+    .chip {
+      font-size: 0.68rem; font-weight: 500; padding: 3px 9px; border-radius: 12px;
+      background: var(--cyan-dim); border: 1px solid rgba(0,212,255,0.25); color: var(--cyan);
+    }
+
+    /* ── APOD ── */
+    .apod-panel { display: flex; flex-direction: column; }
+
+    .apod-media {
+      position: relative; width: 100%; padding-bottom: 56%;
+      background: rgba(0,0,0,0.5); overflow: hidden; flex-shrink: 0;
+    }
+    .apod-media img, .apod-media iframe {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; border: none; transition: opacity 0.5s;
+    }
+
+    .apod-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+    .apod-ttl  { font-size: 1.05rem; font-weight: 600; line-height: 1.4; }
+    .apod-exp  { font-size: 0.83rem; line-height: 1.8; color: var(--muted); }
+    .read-btn  {
+      background: none; border: none; color: var(--cyan); cursor: pointer;
+      font: inherit; font-size: 0.78rem; padding: 0;
+    }
+    .read-btn:hover { text-decoration: underline; }
+    .apod-copy { font-size: 0.7rem; color: var(--faint); }
+
+    /* ── Right column ── */
+    .right-col { display: flex; flex-direction: column; gap: 18px; }
+
+    /* ── ISS ── */
+    #map { height: 290px; background: #080c1c; }
+
+    .iss-stats {
+      display: grid; grid-template-columns: repeat(4,1fr);
+      background: var(--border); gap: 1px;
+    }
+    .iss-stat { background: var(--bg); padding: 13px 10px; text-align: center; }
+    .iss-lbl {
+      display: block; font-size: 0.6rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); margin-bottom: 4px;
+    }
+    .iss-val {
+      display: block; font-size: 0.88rem; font-weight: 600;
+      color: var(--cyan); font-variant-numeric: tabular-nums;
+    }
+
+    /* ISS pulsing dot */
+    .iss-dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--cyan); border: 2px solid #fff;
+      box-shadow: 0 0 0 0 rgba(0,212,255,0.7);
+      animation: issPing 1.8s cubic-bezier(0,0,.2,1) infinite;
+    }
+    @keyframes issPing {
+      0%  { box-shadow: 0 0 0  0   rgba(0,212,255,.7) }
+      70% { box-shadow: 0 0 0  14px rgba(0,212,255,0) }
+      100%{ box-shadow: 0 0 0  0   rgba(0,212,255,0) }
+    }
+
+    /* ── Crew ── */
+    .crew-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr));
+      gap: 10px; padding: 14px;
+    }
+    .crew-card {
+      background: var(--surface-hi); border: 1px solid var(--border);
+      border-radius: 11px; padding: 14px 12px;
+      transition: all .2s; animation: fadeUp .4s ease-out both;
+    }
+    .crew-card:hover {
+      background: rgba(255,255,255,.09);
+      border-color: rgba(0,212,255,.3);
+      transform: translateY(-2px);
+    }
+    .crew-av   { font-size: 1.75rem; display: block; margin-bottom: 8px; }
+    .crew-name { font-size: 0.8rem; font-weight: 600; line-height: 1.3; margin-bottom: 4px; }
+    .crew-craft{ font-size: 0.68rem; font-weight: 500; }
+
+    /* ── Skeleton ── */
+    .sk {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hi) 50%, var(--surface) 75%);
+      background-size: 200% 100%; border-radius: 5px;
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer { to { background-position: -200% 0 } }
+    .sk-cover { position: absolute; inset: 0; border-radius: 0; }
+    .sk-line  { height: 13px; margin-bottom: 8px; }
+
+    /* ── Leaflet overrides ── */
+    .leaflet-container       { background: #080c1c !important; }
+    .leaflet-control-attribution {
+      background: rgba(0,0,0,.5) !important; color: rgba(255,255,255,.3) !important;
+      font-size: 8px !important;
+    }
+    .leaflet-control-attribution a { color: rgba(255,255,255,.35) !important; }
+    .leaflet-control-zoom a {
+      background: rgba(8,9,26,.9) !important; color: var(--text) !important;
+      border-color: var(--border) !important;
+    }
+    .leaflet-control-zoom a:hover { background: var(--surface-hi) !important; }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+      background: rgba(13,17,40,.95) !important; color: var(--text) !important;
+      border: 1px solid var(--border) !important; box-shadow: none !important;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      .iss-stats { grid-template-columns: repeat(2,1fr); }
+    }
+    @media (max-width: 480px) {
+      header { padding: 12px 14px; }
+      main   { padding: 12px; gap: 12px; }
+      #map   { height: 240px; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="stars"></canvas>
+
+<header>
+  <div class="brand">
+    <h1>🚀 Space Dashboard</h1>
+    <span class="live-pill">LIVE</span>
+  </div>
+  <div class="clock">UTC &nbsp;<em id="clock">—</em></div>
+</header>
+
+<main>
+
+  <!-- ── APOD ── -->
+  <section class="panel apod-panel">
+    <div class="panel-head">
+      <span>🌌</span>
+      <h2>Astronomy Picture of the Day</h2>
+      <span id="apod-date" class="chip">…</span>
+    </div>
+    <div class="apod-media" id="apod-media">
+      <div class="sk sk-cover"></div>
+    </div>
+    <div class="apod-body">
+      <div class="apod-ttl" id="apod-ttl">
+        <div class="sk sk-line" style="width:65%"></div>
+      </div>
+      <div class="apod-exp" id="apod-exp">
+        <div class="sk sk-line"></div>
+        <div class="sk sk-line"></div>
+        <div class="sk sk-line" style="width:80%"></div>
+        <div class="sk sk-line" style="width:55%"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Right column ── -->
+  <div class="right-col">
+
+    <!-- ISS Tracker -->
+    <section class="panel iss-panel">
+      <div class="panel-head">
+        <span>🛸</span>
+        <h2>ISS Live Tracker</h2>
+      </div>
+      <div id="map"></div>
+      <div class="iss-stats">
+        <div class="iss-stat">
+          <span class="iss-lbl">Latitude</span>
+          <span class="iss-val" id="iss-lat">—</span>
+        </div>
+        <div class="iss-stat">
+          <span class="iss-lbl">Longitude</span>
+          <span class="iss-val" id="iss-lng">—</span>
+        </div>
+        <div class="iss-stat">
+          <span class="iss-lbl">Altitude</span>
+          <span class="iss-val" id="iss-alt">— km</span>
+        </div>
+        <div class="iss-stat">
+          <span class="iss-lbl">Velocity</span>
+          <span class="iss-val" id="iss-vel">— km/h</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Crew -->
+    <section class="panel crew-panel">
+      <div class="panel-head">
+        <span>👩‍🚀</span>
+        <h2>Humans in Space</h2>
+        <span id="crew-count" class="chip">…</span>
+      </div>
+      <div id="crew-grid" class="crew-grid">
+        <p style="color:var(--muted);font-size:.82rem;padding:4px">Contacting mission control…</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ── Stars ── */
+;(function () {
+  const c = document.getElementById('stars')
+  const ctx = c.getContext('2d')
+  function draw() {
+    c.width = innerWidth; c.height = innerHeight
+    for (let i = 0; i < 230; i++) {
+      const x = Math.random() * c.width
+      const y = Math.random() * c.height
+      const r = Math.random() > 0.85 ? 1.5 : Math.random() > 0.6 ? 1 : 0.5
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255,255,255,${(Math.random() * 0.55 + 0.15).toFixed(2)})`
+      ctx.fill()
+    }
+  }
+  draw()
+  window.addEventListener('resize', draw)
+})()
+
+/* ── Clock ── */
+;(function tick() {
+  const n = new Date()
+  const p = v => String(v).padStart(2,'0')
+  document.getElementById('clock').textContent =
+    `${p(n.getUTCHours())}:${p(n.getUTCMinutes())}:${p(n.getUTCSeconds())}`
+  setTimeout(tick, 1000 - n.getUTCMilliseconds())
+})()
+
+/* ── APOD ── */
+async function loadAPOD() {
+  try {
+    const r = await fetch('/api/apod')
+    const d = await r.json()
+    if (d.code || d.error) throw new Error(d.msg || d.error)
+
+    document.getElementById('apod-date').textContent = d.date
+
+    const wrap = document.getElementById('apod-media')
+    if (d.media_type === 'video') {
+      wrap.innerHTML = `<iframe src="${d.url}" allowfullscreen></iframe>`
+    } else {
+      const img = new Image()
+      img.alt = d.title || 'APOD'
+      img.style.opacity = '0'
+      img.onload = () => { img.style.opacity = '1' }
+      img.src = d.hdurl || d.url
+      wrap.innerHTML = ''
+      wrap.appendChild(img)
+    }
+
+    document.getElementById('apod-ttl').textContent = d.title
+
+    const expEl = document.getElementById('apod-exp')
+    const exp = d.explanation || ''
+    const CUT = 460
+    if (exp.length > CUT) {
+      expEl.innerHTML = ''
+      const p = document.createElement('p')
+      p.textContent = exp.slice(0, CUT)
+      const btn = document.createElement('button')
+      btn.className = 'read-btn'
+      btn.textContent = ' … Read more ↓'
+      btn.onclick = () => { p.textContent = exp; btn.remove() }
+      p.appendChild(btn)
+      expEl.appendChild(p)
+    } else {
+      expEl.textContent = exp
+    }
+
+    if (d.copyright) {
+      const cp = document.createElement('div')
+      cp.className = 'apod-copy'
+      cp.textContent = `© ${d.copyright.replace(/\n/g,' ').trim()}`
+      document.querySelector('.apod-body').appendChild(cp)
+    }
+  } catch (e) {
+    document.getElementById('apod-media').innerHTML =
+      '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:5rem">🌌</div>'
+    document.getElementById('apod-ttl').textContent = 'The Universe Awaits'
+    document.getElementById('apod-exp').textContent =
+      "NASA's APOD service is unreachable right now (the DEMO_KEY allows ~30 requests/hour per IP). Try again shortly."
+    document.getElementById('apod-date').textContent = 'Today'
+  }
+}
+
+/* ── ISS Map ── */
+let map, issMarker, trail
+const trailPts = []
+
+function initMap() {
+  map = L.map('map', { center:[0,0], zoom:2, scrollWheelZoom:false })
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd', maxZoom: 19,
+  }).addTo(map)
+
+  const icon = L.divIcon({
+    className: '',
+    html: '<div class="iss-dot"></div>',
+    iconSize: [14,14], iconAnchor: [7,7],
+  })
+  issMarker = L.marker([0,0], { icon }).addTo(map)
+  issMarker.bindPopup('<b>🛸 ISS</b><br>International Space Station')
+}
+
+async function fetchISS() {
+  try {
+    const r = await fetch('/api/iss')
+    const d = await r.json()
+    if (d.error) return
+
+    const lat = +d.latitude, lng = +d.longitude
+
+    issMarker.setLatLng([lat, lng])
+    document.getElementById('iss-lat').textContent = lat.toFixed(2) + '°'
+    document.getElementById('iss-lng').textContent = lng.toFixed(2) + '°'
+    if (d.altitude) document.getElementById('iss-alt').textContent = (+d.altitude).toFixed(0) + ' km'
+    if (d.velocity) document.getElementById('iss-vel').textContent = Math.round(+d.velocity).toLocaleString() + ' km/h'
+
+    // Trail — reset on anti-meridian crossing
+    if (trailPts.length && Math.abs(lng - trailPts[trailPts.length-1][1]) > 90) trailPts.length = 0
+    trailPts.push([lat, lng])
+    if (trailPts.length > 30) trailPts.shift()
+    if (trail) map.removeLayer(trail)
+    if (trailPts.length > 1)
+      trail = L.polyline(trailPts, { color:'#00d4ff', weight:2, opacity:.45, dashArray:'5 7' }).addTo(map)
+
+    // Follow ISS only if it drifts off screen
+    if (!map.getBounds().contains([lat, lng])) map.panTo([lat, lng], { animate: true })
+  } catch (_) {}
+}
+
+/* ── Crew ── */
+async function loadCrew() {
+  try {
+    const r = await fetch('/api/astronauts')
+    const d = await r.json()
+    if (d.error) throw new Error(d.error)
+
+    document.getElementById('crew-count').textContent = `${d.number} aboard`
+
+    const craftColor = { ISS:'#00d4ff', Tiangong:'#ff6b35', 'Crew Dragon':'#a78bfa' }
+    const avs = ['👨‍🚀','👩‍🚀','🧑‍🚀']
+    document.getElementById('crew-grid').innerHTML = d.people.map((p, i) => `
+      <div class="crew-card" style="animation-delay:${i * 0.07}s">
+        <span class="crew-av">${avs[i % avs.length]}</span>
+        <div class="crew-name">${p.name}</div>
+        <div class="crew-craft" style="color:${craftColor[p.craft] || '#a78bfa'}">${p.craft}</div>
+      </div>
+    `).join('')
+  } catch (_) {
+    document.getElementById('crew-grid').innerHTML =
+      '<p style="padding:4px;color:var(--muted);font-size:.82rem">Unable to fetch crew data.</p>'
+  }
+}
+
+/* ── Boot ── */
+initMap()
+loadAPOD()
+loadCrew()
+fetchISS()
+setInterval(fetchISS, 5000)
+</script>
+</body>
+</html>
