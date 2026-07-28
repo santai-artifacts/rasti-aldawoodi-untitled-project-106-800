@@ -1,0 +1,9 @@
+{
+  "name": "space-dashboard",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  }
+}
